@@ -231,16 +231,39 @@ void CreateHLine(string name,double price,color clr,string tooltip)
 {
    DeleteObject(name);
 
-   ObjectCreate(0,name,OBJ_HLINE,0,0,price);
-   ObjectSetDouble(0,name,OBJPROP_PRICE,price);
+   // Segmento horizontal curto, somente no lado direito do chart.
+   // OBJ_HLINE atravessa todo o gráfico; OBJ_TREND com RAY=false
+   // permite limitar visualmente o comprimento da linha.
+   int bars = WindowBarsPerChart();
+   if(bars < 8)
+      bars = 8;
+
+   int rightShift = MathMax(1,bars / 4);
+   int leftShift  = MathMax(0,bars / 16);
+
+   datetime t1 = iTime(Symbol(),Period(),rightShift);
+   datetime t2 = iTime(Symbol(),Period(),leftShift);
+
+   if(t1 <= 0 || t2 <= 0)
+   {
+      int sec = PeriodSeconds();
+      if(sec <= 0) sec = 60;
+      t1 = TimeCurrent() - sec*rightShift;
+      t2 = TimeCurrent() - sec*leftShift;
+   }
+
+   ObjectCreate(0,name,OBJ_TREND,0,t1,price,t2,price);
+   ObjectSetDouble(0,name,OBJPROP_PRICE1,price);
+   ObjectSetDouble(0,name,OBJPROP_PRICE2,price);
    ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
    ObjectSetInteger(0,name,OBJPROP_STYLE,STYLE_DASH);
    ObjectSetInteger(0,name,OBJPROP_WIDTH,2);
+   ObjectSetInteger(0,name,OBJPROP_RAY,false);
+   ObjectSetInteger(0,name,OBJPROP_BACK,false);
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,true);
-   ObjectSetInteger(0,name,OBJPROP_SELECTED,false);
+   ObjectSetInteger(0,name,OBJPROP_SELECTED,true);
    ObjectSetString(0,name,OBJPROP_TOOLTIP,tooltip);
 }
-
 double NormalizeLots(double lots)
 {
    double minLot = MarketInfo(Symbol(),MODE_MINLOT);
