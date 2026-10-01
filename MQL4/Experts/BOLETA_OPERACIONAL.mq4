@@ -2,7 +2,7 @@
 #property version   "0.30"
 #property description "BOLETA OPERACIONAL - visual order planner and manual execution"
 
-input bool   InpTestMode    = true;
+input bool   InpTestMode    = false;
 input double InpLots        = 0.01;
 input double InpLotStep     = 0.01;
 input int    InpMagic       = 1001;
@@ -99,6 +99,99 @@ void SetLabelText(string name,string text)
 {
    if(ObjectFind(0,name) >= 0)
       ObjectSetString(0,name,OBJPROP_TEXT,text);
+}
+
+void ShowExecutionMessage(string text,color clr)
+{
+   SetLabelText(OBJ_STATUS,text);
+   if(ObjectFind(0,OBJ_STATUS)>=0)
+      ObjectSetInteger(0,OBJ_STATUS,OBJPROP_COLOR,clr);
+}
+
+bool ValidateLots()
+{
+   double minLot=MarketInfo(Symbol(),MODE_MINLOT);
+   double maxLot=MarketInfo(Symbol(),MODE_MAXLOT);
+   double step=MarketInfo(Symbol(),MODE_LOTSTEP);
+
+   if(g_lots < minLot || g_lots > maxLot)
+   {
+      ShowExecutionMessage(StringFormat("ERRO LOTE: %.2f | permitido %.2f - %.2f",g_lots,minLot,maxLot),clrRed);
+      return(false);
+   }
+
+   if(step>0.0)
+   {
+      double units=g_lots/step;
+      if(MathAbs(units-MathRound(units))>0.000001)
+      {
+         ShowExecutionMessage(StringFormat("ERRO LOTE: %.2f | step %.2f",g_lots,step),clrRed);
+         return(false);
+      }
+   }
+   return(true);
+}
+
+bool ValidatePendingDistances(int type)
+{
+   RefreshRates();
+
+   double point=MarketInfo(Symbol(),MODE_POINT);
+   int stopLevel=(int)MarketInfo(Symbol(),MODE_STOPLEVEL);
+   int freezeLevel=(int)MarketInfo(Symbol(),MODE_FREEZELEVEL);
+   double minDistance=MathMax(stopLevel,freezeLevel)*point;
+
+   if(type==OP_BUYLIMIT && g_entry >= Ask-minDistance)
+      return(false);
+   if(type==OP_BUYSTOP && g_entry <= Ask+minDistance)
+      return(false);
+   if(type==OP_SELLLIMIT && g_entry <= Bid+minDistance)
+      return(false);
+   if(type==OP_SELLSTOP && g_entry >= Bid-minDistance)
+      return(false);
+
+   if(g_direction==DIR_BUY &&
+      (g_entry-g_sl < minDistance || g_tp-g_entry < minDistance))
+      return(false);
+
+   if(g_direction==DIR_SELL &&
+      (g_sl-g_entry < minDistance || g_entry-g_tp < minDistance))
+      return(false);
+
+   return(true);
+}
+
+string ErrorText(int error)
+{
+   switch(error)
+   {
+      case 0: return("OK");
+      case 1: return("No result");
+      case 2: return("Common error");
+      case 3: return("Invalid trade parameters");
+      case 4: return("Trade server busy");
+      case 5: return("Old terminal");
+      case 6: return("No connection");
+      case 8: return("Too frequent requests");
+      case 64: return("Account disabled");
+      case 65: return("Invalid account");
+      case 128: return("Trade timeout");
+      case 129: return("Invalid price");
+      case 130: return("Invalid stops");
+      case 131: return("Invalid volume");
+      case 132: return("Market closed");
+      case 133: return("Trade disabled");
+      case 134: return("Not enough money");
+      case 135: return("Price changed");
+      case 136: return("Off quotes");
+      case 137: return("Broker busy");
+      case 138: return("Requote");
+      case 139: return("Order locked");
+      case 146: return("Trade context busy");
+      case 147: return("Expiration denied");
+      case 148: return("Too many orders");
+      default: return("MT4 error "+IntegerToString(error));
+   }
 }
 
 void CreateButton(string name,string text,int x,int y,int w,int h,color bg,color fg)
@@ -401,8 +494,12 @@ bool ExecuteMarket(int type)
 {
    ReadLot();
 
+   if(!ValidateLots())
+      return(false);
+
    if(InpTestMode)
    {
+      ShowExecutionMessage("TEST MODE — ordem NAO enviada",clrOrange);
       PrintFormat("[BOLETA][TEST] MARKET %s %.2f lots",
                   type == OP_BUY ? "BUY" : "SELL",g_lots);
       return(true);
@@ -423,13 +520,16 @@ bool ExecuteMarket(int type)
 
    if(ticket < 0)
    {
-      PrintFormat("[BOLETA][ERROR] Market order failed. Error=%d",GetLastError());
+      int error=GetLastError();
+      ShowExecutionMessage(StringFormat("ORDEM RECUSADA | %d | %s",error,ErrorText(error)),clrRed);
+      PrintFormat("[BOLETA][ERROR] Market order failed. Error=%d (%s)",error,ErrorText(error));
       return(false);
    }
 
+   ShowExecutionMessage(StringFormat("EXECUTADO | Ticket %d | %s %.2f",
+                                     ticket,type == OP_BUY ? "BUY" : "SELL",g_lots),clrLime);
    PrintFormat("[BOLETA][OK] MARKET ticket=%d type=%s lot=%.2f",
                ticket,type == OP_BUY ? "BUY" : "SELL",g_lots);
-
    return(true);
 }
 
@@ -437,8 +537,12 @@ bool ExecutePending()
 {
    ReadLot();
 
+   if(!ValidateLots())
+      return(false);
+
    if(!GeometryValid())
    {
+      ShowExecutionMessage("ORDEM RECUSADA | geometria Entrada/Stop/Gain invalida",clrRed);
       Print("[BOLETA][BLOCKED] Invalid Entry/Stop/Gain geometry.");
       return(false);
    }
@@ -452,8 +556,16 @@ bool ExecutePending()
    else
       type = (g_entry > Bid ? OP_SELLLIMIT : OP_SELLSTOP);
 
+   if(!ValidatePendingDistances(type))
+   {
+      ShowExecutionMessage("ORDEM RECUSADA | distancia minima da corretora",clrRed);
+      Print("[BOLETA][BLOCKED] Pending distance violates broker limits.");
+      return(false);
+   }
+
    if(InpTestMode)
    {
+      ShowExecutionMessage("TEST MODE — ordem NAO enviada",clrOrange);
       PrintFormat("[BOLETA][TEST] PENDING %s %s lot=%.2f entry=%.*f sl=%.*f tp=%.*f",
                   g_direction == DIR_BUY ? "BUY" : "SELL",
                   PendingType(),g_lots,
@@ -471,13 +583,16 @@ bool ExecutePending()
 
    if(ticket < 0)
    {
-      PrintFormat("[BOLETA][ERROR] Pending order failed. Error=%d",GetLastError());
+      int error=GetLastError();
+      ShowExecutionMessage(StringFormat("PENDENTE RECUSADA | %d | %s",error,ErrorText(error)),clrRed);
+      PrintFormat("[BOLETA][ERROR] Pending order failed. Error=%d (%s)",error,ErrorText(error));
       return(false);
    }
 
+   ShowExecutionMessage(StringFormat("PENDENTE ENVIADA | Ticket %d | %s",
+                                     ticket,PendingType()),clrLime);
    PrintFormat("[BOLETA][OK] PENDING ticket=%d type=%s lot=%.2f",
                ticket,PendingType(),g_lots);
-
    return(true);
 }
 
