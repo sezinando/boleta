@@ -410,17 +410,20 @@ void RebuildPlannerForDirection()
    double reference = (g_direction == DIR_BUY ? Ask : Bid);
    double offset = 200.0*Point;
 
-   g_entry = NormalizeDouble(reference,Digits);
-
+   // A entrada inicial precisa nascer como uma pendente REALMENTE válida.
+   // Não usamos Ask/Bid como entrada porque isso transforma a ordem em
+   // uma condição inválida para OP_BUYSTOP/OP_SELLSTOP em muitas corretoras.
    if(g_direction == DIR_BUY)
    {
-      g_sl = NormalizeDouble(g_entry-offset,Digits);
-      g_tp = NormalizeDouble(g_entry+offset*2.0,Digits);
+      g_entry = NormalizeDouble(reference + offset,Digits);
+      g_sl    = NormalizeDouble(g_entry - offset,Digits);
+      g_tp    = NormalizeDouble(g_entry + offset*2.0,Digits);
    }
    else
    {
-      g_sl = NormalizeDouble(g_entry+offset,Digits);
-      g_tp = NormalizeDouble(g_entry-offset*2.0,Digits);
+      g_entry = NormalizeDouble(reference - offset,Digits);
+      g_sl    = NormalizeDouble(g_entry + offset,Digits);
+      g_tp    = NormalizeDouble(g_entry - offset*2.0,Digits);
    }
 
    CreateHLine(LINE_ENTRY,g_entry,clrDodgerBlue,"ENTRADA");
