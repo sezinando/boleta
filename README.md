@@ -41,3 +41,10 @@ docs/
 ## Regra importante
 
 A boleta não deve assumir comportamento do Zeus, AW Recovery ou SENTINEL sem que a regra seja explicitamente especificada e testada.
+
+
+## V0.2 — Diferencial da Boleta
+
+A V0.2 introduz a **Ordem Pendente Visual**: o operador desenha Entrada, Stop e Gain no gráfico, movimenta as linhas e acompanha em tempo real o impacto financeiro e percentual sobre a conta. Nenhuma ordem é enviada durante o desenho; a execução somente ocorre em **CONFIRMAR ORDEM**.
+
+Documentação: `docs/ORDEM_PENDENTE_VISUAL.md`.
