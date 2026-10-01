@@ -2,7 +2,6 @@
 #property version   "0.30"
 #property description "BOLETA OPERACIONAL - visual order planner and manual execution"
 
-input bool   InpTestMode    = false;
 input double InpLots        = 0.01;
 input double InpLotStep     = 0.01;
 input int    InpMagic       = 1001;
@@ -471,12 +470,11 @@ void CancelPlanner()
 
 bool TradeEnvironmentOK()
 {
-   if(InpTestMode)
-      return(true);
-
    if(!IsTradeAllowed())
    {
-      Print("[BOLETA][BLOCKED] Trading not allowed.");
+      int err=GetLastError();
+      ShowExecutionMessage(StringFormat("TRADING BLOQUEADO | %d | %s",err,ErrorText(err)),clrRed);
+      PrintFormat("[BOLETA][BLOCKED] Trading not allowed. Error=%d (%s)",err,ErrorText(err));
       return(false);
    }
 
@@ -499,14 +497,6 @@ bool ExecuteMarket(int type)
 
    if(!ValidateLots())
       return(false);
-
-   if(InpTestMode)
-   {
-      ShowExecutionMessage("TEST MODE — ordem NAO enviada",clrOrange);
-      PrintFormat("[BOLETA][TEST] MARKET %s %.2f lots",
-                  type == OP_BUY ? "BUY" : "SELL",g_lots);
-      return(true);
-   }
 
    if(!TradeEnvironmentOK())
       return(false);
@@ -564,16 +554,6 @@ bool ExecutePending()
       ShowExecutionMessage("ORDEM RECUSADA | distancia minima da corretora",clrRed);
       Print("[BOLETA][BLOCKED] Pending distance violates broker limits.");
       return(false);
-   }
-
-   if(InpTestMode)
-   {
-      ShowExecutionMessage("TEST MODE — ordem NAO enviada",clrOrange);
-      PrintFormat("[BOLETA][TEST] PENDING %s %s lot=%.2f entry=%.*f sl=%.*f tp=%.*f",
-                  g_direction == DIR_BUY ? "BUY" : "SELL",
-                  PendingType(),g_lots,
-                  Digits,g_entry,Digits,g_sl,Digits,g_tp);
-      return(true);
    }
 
    if(!TradeEnvironmentOK())
