@@ -606,13 +606,6 @@ void CloseAll()
       if(OrderType() != OP_BUY && OrderType() != OP_SELL)
          continue;
 
-      if(InpTestMode)
-      {
-         PrintFormat("[BOLETA][TEST] CLOSE ticket=%d lot=%.2f",
-                     OrderTicket(),OrderLots());
-         continue;
-      }
-
       RefreshRates();
 
       double price = (OrderType() == OP_BUY ? Bid : Ask);
