@@ -680,7 +680,7 @@ void BuildPanel()
 
 void UpdateStatus()
 {
-   string mode = (InpTestMode ? "TEST" : "LIVE");
+   string mode = "LIVE";
 
    string text = StringFormat("%s | %s | Magic %d | Spread %.1f",
                               Symbol(),mode,InpMagic,
