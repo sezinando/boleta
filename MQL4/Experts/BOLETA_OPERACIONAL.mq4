@@ -249,12 +249,12 @@ void UpdatePlanner()
 {
    if(!g_plannerActive)
    {
-      SetLabelText(OBJ_RISK,"Risco (SL):  $ 0.00   0.000%",PanelX+20,PanelY+280);
-      SetLabelText(OBJ_GAIN,"Ganho (TP):  $ 0.00   0.000%",PanelX+20,PanelY+302);
-      SetLabelText(OBJ_RR,"Relação R:R:  1 : 0.00",PanelX+20,PanelY+324);
-      SetLabelText(OBJ_ENTRY_INFO,"Entrada: —",PanelX+20,PanelY+350);
-      SetLabelText(OBJ_SL_INFO,"Stop:    —",PanelX+20,PanelY+370);
-      SetLabelText(OBJ_TP_INFO,"Gain:    —",PanelX+20,PanelY+390);
+      SetLabelText(OBJ_RISK,"Risco (SL):  $ 0.00   0.000%");
+      SetLabelText(OBJ_GAIN,"Ganho (TP):  $ 0.00   0.000%");
+      SetLabelText(OBJ_RR,"Relação R:R:  1 : 0.00");
+      SetLabelText(OBJ_ENTRY_INFO,"Entrada: —");
+      SetLabelText(OBJ_SL_INFO,"Stop:    —");
+      SetLabelText(OBJ_TP_INFO,"Gain:    —");
       return;
    }
 
