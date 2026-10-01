@@ -25,6 +25,8 @@ input string InpComment        = "BOLETA";
 #define LBL_STATE       "BOLETA_LBL_STATE"
 #define LBL_PENDING     "BOLETA_LBL_PENDING"
 #define LBL_IMPACT      "BOLETA_LBL_IMPACT"
+#define BG_PANEL        "BOLETA_BG_PANEL"
+#define BG_RISK         "BOLETA_BG_RISK"
 #define LINE_ENTRY      "BOLETA_LINE_ENTRY"
 #define LINE_STOP       "BOLETA_LINE_STOP"
 #define LINE_TP         "BOLETA_LINE_TP"
@@ -77,6 +79,31 @@ bool CreateEdit(string name,string text,int x,int y,int w,int h)
    ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
    ObjectSetInteger(0,name,OBJPROP_ALIGN,ALIGN_CENTER);
    return(true);
+}
+
+void CreatePanel(string name,int x,int y,int w,int h,color bg,color border)
+{
+   if(ObjectFind(0,name)>=0)
+      ObjectDelete(0,name);
+   if(!ObjectCreate(0,name,OBJ_RECTANGLE_LABEL,0,0,0))
+      return;
+   ObjectSetInteger(0,name,OBJPROP_XDISTANCE,x);
+   ObjectSetInteger(0,name,OBJPROP_YDISTANCE,y);
+   ObjectSetInteger(0,name,OBJPROP_XSIZE,w);
+   ObjectSetInteger(0,name,OBJPROP_YSIZE,h);
+   ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
+   ObjectSetInteger(0,name,OBJPROP_BGCOLOR,bg);
+   ObjectSetInteger(0,name,OBJPROP_BORDER_COLOR,border);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   ObjectSetInteger(0,name,OBJPROP_BACK,false);
+}
+
+void SetButtonColor(string name,color bg,color fg)
+{
+   if(ObjectFind(0,name)<0)
+      return;
+   ObjectSetInteger(0,name,OBJPROP_BGCOLOR,bg);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,fg);
 }
 
 void SetLabel(string name,string text,int x,int y,int size=10)
@@ -512,6 +539,9 @@ int CloseOrders(int typeFilter)
 
 void BuildUI()
 {
+   CreatePanel(BG_PANEL,5,5,625,330,clrBlack,clrDimGray);
+   CreatePanel(BG_RISK,8,235,619,42,clrBlack,clrDimGray);
+
    CreateButton(BTN_LOT_MINUS,"−",10,45,35,25);
    CreateEdit(EDIT_LOT,DoubleToString(g_lots,2),48,45,120,25);
    CreateButton(BTN_LOT_PLUS,"+",173,45,35,25);
@@ -526,6 +556,13 @@ void BuildUI()
    CreateButton(BTN_CLOSE_BUY,"FECHAR BUY",10,285,95,28);
    CreateButton(BTN_CLOSE_SELL,"FECHAR SELL",110,285,95,28);
    CreateButton(BTN_CLOSE_ALL,"FECHAR TUDO",210,285,95,28);
+
+   SetButtonColor(BTN_BUY,clrGreen,clrWhite);
+   SetButtonColor(BTN_SELL,clrFireBrick,clrWhite);
+   SetButtonColor(BTN_PENDING,clrDodgerBlue,clrWhite);
+   SetButtonColor(BTN_CONFIRM,clrDarkGreen,clrWhite);
+   SetButtonColor(BTN_CANCEL,clrMaroon,clrWhite);
+   SetButtonColor(BTN_CLOSE_ALL,clrMaroon,clrWhite);
 
    SetLabel(LBL_STATUS,"BOLETA inicializando...",10,10,10);
    SetLabel(LBL_STATE,"",10,205,10);
@@ -562,6 +599,8 @@ void OnDeinit(const int reason)
    ObjectDelete(0,LBL_STATE);
    ObjectDelete(0,LBL_PENDING);
    ObjectDelete(0,LBL_IMPACT);
+   ObjectDelete(0,BG_PANEL);
+   ObjectDelete(0,BG_RISK);
 }
 
 void OnTick()
