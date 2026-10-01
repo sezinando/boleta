@@ -581,6 +581,17 @@ bool ExecutePending()
 
    ResetLastError();
 
+   g_entry = NormalizeDouble(g_entry,Digits);
+   g_sl    = NormalizeDouble(g_sl,Digits);
+   g_tp    = NormalizeDouble(g_tp,Digits);
+
+   PrintFormat("[BOLETA][SEND] type=%d %s lot=%.2f entry=%.*f sl=%.*f tp=%.*f Ask=%.*f Bid=%.*f stop=%d freeze=%d",
+               type,PendingType(),g_lots,
+               Digits,g_entry,Digits,g_sl,Digits,g_tp,
+               Digits,Ask,Digits,Bid,
+               (int)MarketInfo(Symbol(),MODE_STOPLEVEL),
+               (int)MarketInfo(Symbol(),MODE_FREEZELEVEL));
+
    int ticket = OrderSend(Symbol(),type,g_lots,g_entry,InpSlippage,
                           g_sl,g_tp,InpComment,InpMagic,0,clrDodgerBlue);
 
