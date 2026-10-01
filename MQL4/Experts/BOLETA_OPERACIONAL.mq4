@@ -1,13 +1,14 @@
 #property strict
-#property version   "0.30"
-#property description "BOLETA OPERACIONAL - visual order planner and manual execution"
+#property version   "0.41"
+#property description "BOLETA OPERACIONAL - visual order planner, manual execution and results"
 
-input double InpLots        = 0.01;
-input double InpLotStep     = 0.01;
-input int    InpMagic       = 1001;
-input int    InpSlippage    = 30;
-input int    InpMaxSpread   = 100;
-input string InpComment     = "BOLETA";
+input double InpLots             = 0.01;
+input double InpLotStep          = 0.01;
+input int    InpMagic            = 1001;
+input int    InpSlippage         = 30;
+input int    InpMaxSpread        = 100;
+input string InpComment          = "BOLETA";
+input bool   InpResultAllSymbols = false;   // resultado: false = so este simbolo | true = todos (mesmo magic)
 
 #define PFX             "BOLETA_"
 
@@ -34,9 +35,21 @@ input string InpComment     = "BOLETA";
 #define OBJ_TP_INFO     PFX+"TP_INFO"
 #define OBJ_CLOSE_ALL   PFX+"CLOSE_ALL"
 
+// --- novos: bloco de resultados ---
+#define OBJ_RES_TITLE   PFX+"RES_TITLE"
+#define OBJ_RES_OPEN    PFX+"RES_OPEN"
+#define OBJ_RES_CLOSED  PFX+"RES_CLOSED"
+#define OBJ_RES_TOTAL   PFX+"RES_TOTAL"
+#define OBJ_MSG         PFX+"MSG"
+
 #define LINE_ENTRY      PFX+"LINE_ENTRY"
 #define LINE_SL         PFX+"LINE_SL"
 #define LINE_TP         PFX+"LINE_TP"
+
+// cores de resultado
+#define CLR_POS         clrLime
+#define CLR_NEG         clrTomato
+#define CLR_ZERO        clrSilver
 
 enum PlannerDirection
 {
@@ -51,11 +64,25 @@ double g_entry = 0.0;
 double g_sl = 0.0;
 double g_tp = 0.0;
 
-int PanelX = 10;
-int PanelY = 20;
-int PanelW = 310;
-int PanelH = 500;
+// resultados
+double g_openPL     = 0.0;
+int    g_openCount  = 0;
+int    g_pendCount  = 0;
+double g_closedPL   = 0.0;
+int    g_closedCount= 0;
+uint   g_lastHist   = 0;
 
+int PanelX = 10;
+int PanelY = 15;
+int PanelW = 250;
+int PanelH = 380;
+
+// forward declarations
+void UpdatePlanner();
+void RebuildPlannerForDirection();
+void UpdateResults(bool force);
+
+//+------------------------------------------------------------------+
 void DeleteObject(string name)
 {
    if(ObjectFind(0,name) >= 0)
@@ -100,13 +127,143 @@ void SetLabelText(string name,string text)
       ObjectSetString(0,name,OBJPROP_TEXT,text);
 }
 
-void ShowExecutionMessage(string text,color clr)
+void SetLabel(string name,string text,color clr)
 {
-   SetLabelText(OBJ_STATUS,text);
-   if(ObjectFind(0,OBJ_STATUS)>=0)
-      ObjectSetInteger(0,OBJ_STATUS,OBJPROP_COLOR,clr);
+   if(ObjectFind(0,name) < 0)
+      return;
+   ObjectSetString(0,name,OBJPROP_TEXT,text);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
 }
 
+// Mensagens vao para a linha propria OBJ_MSG (o OBJ_STATUS e reescrito a cada tick)
+void ShowExecutionMessage(string text,color clr)
+{
+   SetLabel(OBJ_MSG,text,clr);
+}
+
+//+------------------------------------------------------------------+
+//| Formatacao / cores de resultado                                  |
+//+------------------------------------------------------------------+
+color PnLColor(double v)
+{
+   if(v > 0.005)  return(CLR_POS);
+   if(v < -0.005) return(CLR_NEG);
+   return(CLR_ZERO);
+}
+
+string FmtMoney(double v)
+{
+   if(MathAbs(v) < 0.005)
+      return("$ 0.00");
+   return(StringFormat("%s$ %.2f",(v > 0.0 ? "+" : "-"),MathAbs(v)));
+}
+
+// percentual do valor em relacao ao SALDO da conta
+string FmtPct(double money)
+{
+   double bal = AccountBalance();
+   double p   = (bal > 0.0 ? money/bal*100.0 : 0.0);
+
+   if(MathAbs(p) < 0.0005)
+      return("0.000%");
+   return(StringFormat("%s%.3f%%",(p > 0.0 ? "+" : "-"),MathAbs(p)));
+}
+
+bool IsMine()
+{
+   if(OrderMagicNumber() != InpMagic)
+      return(false);
+   if(!InpResultAllSymbols && OrderSymbol() != Symbol())
+      return(false);
+   return(true);
+}
+
+void CalcOpen()
+{
+   g_openPL = 0.0;
+   g_openCount = 0;
+   g_pendCount = 0;
+
+   for(int i=OrdersTotal()-1;i>=0;i--)
+   {
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))
+         continue;
+      if(!IsMine())
+         continue;
+
+      int t = OrderType();
+      if(t == OP_BUY || t == OP_SELL)
+      {
+         g_openPL += OrderProfit() + OrderSwap() + OrderCommission();
+         g_openCount++;
+      }
+      else
+         g_pendCount++;
+   }
+}
+
+void CalcClosed()
+{
+   g_closedPL = 0.0;
+   g_closedCount = 0;
+
+   datetime dayStart = StringToTime(TimeToString(TimeCurrent(),TIME_DATE));
+
+   for(int i=OrdersHistoryTotal()-1;i>=0;i--)
+   {
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_HISTORY))
+         continue;
+      if(!IsMine())
+         continue;
+
+      int t = OrderType();
+      if(t != OP_BUY && t != OP_SELL)
+         continue;
+
+      if(OrderCloseTime() < dayStart)
+         continue;
+
+      g_closedPL += OrderProfit() + OrderSwap() + OrderCommission();
+      g_closedCount++;
+   }
+}
+
+// force=true recalcula tambem o historico (senao no maximo 1x por segundo)
+void UpdateResults(bool force)
+{
+   CalcOpen();
+
+   uint now = GetTickCount();
+   if(force || now - g_lastHist >= 1000)
+   {
+      CalcClosed();
+      g_lastHist = now;
+   }
+
+   double total = g_openPL + g_closedPL;
+
+   SetLabel(OBJ_RES_TITLE,
+            StringFormat("RESULTADO   |   Saldo: $ %.2f",AccountBalance()),
+            clrSilver);
+
+   string pend = (g_pendCount > 0 ? StringFormat(" +%d pend.",g_pendCount) : "");
+
+   SetLabel(OBJ_RES_OPEN,
+            StringFormat("Abertas (%d)%s:   %s   %s",
+                         g_openCount,pend,FmtMoney(g_openPL),FmtPct(g_openPL)),
+            PnLColor(g_openPL));
+
+   SetLabel(OBJ_RES_CLOSED,
+            StringFormat("Fechadas hoje (%d):   %s   %s",
+                         g_closedCount,FmtMoney(g_closedPL),FmtPct(g_closedPL)),
+            PnLColor(g_closedPL));
+
+   SetLabel(OBJ_RES_TOTAL,
+            StringFormat("TOTAL DO DIA:   %s   %s",FmtMoney(total),FmtPct(total)),
+            PnLColor(total));
+}
+
+//+------------------------------------------------------------------+
 bool ValidateLots()
 {
    double minLot=MarketInfo(Symbol(),MODE_MINLOT);
@@ -205,7 +362,7 @@ void CreateButton(string name,string text,int x,int y,int w,int h,color bg,color
    ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
    ObjectSetInteger(0,name,OBJPROP_BGCOLOR,bg);
    ObjectSetInteger(0,name,OBJPROP_COLOR,fg);
-   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,9);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,8);
    ObjectSetString(0,name,OBJPROP_TEXT,text);
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
 }
@@ -222,7 +379,7 @@ void CreateEdit(string name,string text,int x,int y,int w,int h)
    ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
    ObjectSetInteger(0,name,OBJPROP_BGCOLOR,clrBlack);
    ObjectSetInteger(0,name,OBJPROP_COLOR,clrWhite);
-   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,10);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,9);
    ObjectSetInteger(0,name,OBJPROP_ALIGN,ALIGN_CENTER);
    ObjectSetString(0,name,OBJPROP_TEXT,text);
 }
@@ -264,6 +421,7 @@ void CreateHLine(string name,double price,color clr,string tooltip)
    ObjectSetInteger(0,name,OBJPROP_SELECTED,true);
    ObjectSetString(0,name,OBJPROP_TOOLTIP,tooltip);
 }
+
 double NormalizeLots(double lots)
 {
    double minLot = MarketInfo(Symbol(),MODE_MINLOT);
@@ -291,7 +449,9 @@ void ReadLot()
    if(ObjectFind(0,OBJ_LOT_EDIT) < 0)
       return;
 
-   double value = StrToDouble(ObjectGetString(0,OBJ_LOT_EDIT,OBJPROP_TEXT));
+   string txt = ObjectGetString(0,OBJ_LOT_EDIT,OBJPROP_TEXT);
+   StringReplace(txt,",",".");           // aceita "0,05"
+   double value = StrToDouble(txt);
 
    if(value <= 0.0)
       value = MarketInfo(Symbol(),MODE_MINLOT);
@@ -329,14 +489,15 @@ double PriceDistanceMoney(double p1,double p2,double lots)
    return(MathAbs(p1-p2)*MoneyPerPriceUnitPerLot()*lots);
 }
 
+// impacto em % em relacao ao SALDO da conta
 double AccountImpact(double money)
 {
-   double equity = AccountEquity();
+   double balance = AccountBalance();
 
-   if(equity <= 0.0)
+   if(balance <= 0.0)
       return(0.0);
 
-   return((money/equity)*100.0);
+   return((money/balance)*100.0);
 }
 
 bool GeometryValid()
@@ -364,9 +525,9 @@ void UpdatePlanner()
 {
    if(!g_plannerActive)
    {
-      SetLabelText(OBJ_RISK,"Risco (SL):  $ 0.00   0.000%");
-      SetLabelText(OBJ_GAIN,"Ganho (TP):  $ 0.00   0.000%");
-      SetLabelText(OBJ_RR,"Relação R:R:  1 : 0.00");
+      SetLabel(OBJ_RISK,"Risco (SL):  $ 0.00   0.000%",CLR_ZERO);
+      SetLabel(OBJ_GAIN,"Ganho (TP):  $ 0.00   0.000%",CLR_ZERO);
+      SetLabel(OBJ_RR,"Relação R:R:  1 : 0.00",clrWhite);
       SetLabelText(OBJ_ENTRY_INFO,"Entrada: —");
       SetLabelText(OBJ_SL_INFO,"Stop:    —");
       SetLabelText(OBJ_TP_INFO,"Gain:    —");
@@ -384,14 +545,15 @@ void UpdatePlanner()
 
    double rr = (riskMoney > 0.0 ? gainMoney/riskMoney : 0.0);
 
-   SetLabelText(OBJ_RISK,
-      StringFormat("Risco (SL):  -$ %.2f   -%.3f%%",riskMoney,riskPct));
+   SetLabel(OBJ_RISK,
+      StringFormat("Risco (SL):  -$ %.2f   -%.3f%%",riskMoney,riskPct),CLR_NEG);
 
-   SetLabelText(OBJ_GAIN,
-      StringFormat("Ganho (TP):  +$ %.2f   +%.3f%%",gainMoney,gainPct));
+   SetLabel(OBJ_GAIN,
+      StringFormat("Ganho (TP):  +$ %.2f   +%.3f%%",gainMoney,gainPct),CLR_POS);
 
-   SetLabelText(OBJ_RR,
-      StringFormat("Relação R:R:  1 : %.2f",rr));
+   SetLabel(OBJ_RR,
+      StringFormat("Relação R:R:  1 : %.2f",rr),
+      (rr >= 1.0 ? CLR_POS : clrOrange));
 
    SetLabelText(OBJ_ENTRY_INFO,
       StringFormat("Entrada: %.5f   (%s)",g_entry,PendingType()));
@@ -407,14 +569,8 @@ void SetDirection(int direction)
 {
    g_direction = direction;
 
-   if(direction == DIR_BUY)
-   {
-      SetLabelText(OBJ_STATUS,"DIREÇÃO: BUY | "+(g_plannerActive ? "PLANEJAMENTO" : "MERCADO"));
-   }
-   else
-   {
-      SetLabelText(OBJ_STATUS,"DIREÇÃO: SELL | "+(g_plannerActive ? "PLANEJAMENTO" : "MERCADO"));
-   }
+   ShowExecutionMessage("DIREÇÃO: "+(direction == DIR_BUY ? "BUY" : "SELL")+
+                        " | "+(g_plannerActive ? "PLANEJAMENTO" : "MERCADO"),clrSilver);
 
    if(g_plannerActive)
       RebuildPlannerForDirection();
@@ -433,8 +589,6 @@ void RebuildPlannerForDirection()
    double offset = 200.0*Point;
 
    // A entrada inicial precisa nascer como uma pendente REALMENTE válida.
-   // Não usamos Ask/Bid como entrada porque isso transforma a ordem em
-   // uma condição inválida para OP_BUYSTOP/OP_SELLSTOP em muitas corretoras.
    if(g_direction == DIR_BUY)
    {
       g_entry = NormalizeDouble(reference + offset,Digits);
@@ -462,9 +616,9 @@ void StartPlanner()
 
    RebuildPlannerForDirection();
 
-   SetLabelText(OBJ_STATUS,
+   ShowExecutionMessage(
       StringFormat("PLANEJAMENTO %s | ajuste as linhas e confirme",
-                   g_direction == DIR_BUY ? "BUY" : "SELL"));
+                   g_direction == DIR_BUY ? "BUY" : "SELL"),clrSilver);
 
    ObjectSetString(0,OBJ_DRAW,OBJPROP_TEXT,"ORDEM EM PLANEJAMENTO");
    ChartRedraw();
@@ -482,10 +636,6 @@ void CancelPlanner()
    g_tp = 0.0;
 
    ObjectSetString(0,OBJ_DRAW,OBJPROP_TEXT,"DESENHAR ORDEM");
-
-   SetLabelText(OBJ_STATUS,
-      StringFormat("DIREÇÃO: %s | PRONTO",
-                   g_direction == DIR_BUY ? "BUY" : "SELL"));
 
    UpdatePlanner();
    ChartRedraw();
@@ -507,6 +657,7 @@ bool TradeEnvironmentOK()
 
    if(spread > InpMaxSpread)
    {
+      ShowExecutionMessage(StringFormat("SPREAD ALTO: %.0f > %d pts",spread,InpMaxSpread),clrOrange);
       PrintFormat("[BOLETA][BLOCKED] Spread %.1f > %d",spread,InpMaxSpread);
       return(false);
    }
@@ -588,10 +739,12 @@ bool ExecutePending()
    g_sl    = NormalizeDouble(g_sl,Digits);
    g_tp    = NormalizeDouble(g_tp,Digits);
 
-   PrintFormat("[BOLETA][SEND] type=%d %s lot=%.2f entry=%.*f sl=%.*f tp=%.*f Ask=%.*f Bid=%.*f stop=%d freeze=%d",
-               type,PendingType(),g_lots,
-               Digits,g_entry,Digits,g_sl,Digits,g_tp,
-               Digits,Ask,Digits,Bid,
+   string typeName = PendingType();
+
+   PrintFormat("[BOLETA][SEND] type=%d %s lot=%.2f entry=%s sl=%s tp=%s Ask=%s Bid=%s stop=%d freeze=%d",
+               type,typeName,g_lots,
+               DoubleToString(g_entry,Digits),DoubleToString(g_sl,Digits),DoubleToString(g_tp,Digits),
+               DoubleToString(Ask,Digits),DoubleToString(Bid,Digits),
                (int)MarketInfo(Symbol(),MODE_STOPLEVEL),
                (int)MarketInfo(Symbol(),MODE_FREEZELEVEL));
 
@@ -606,15 +759,16 @@ bool ExecutePending()
       return(false);
    }
 
-   ShowExecutionMessage(StringFormat("PENDENTE ENVIADA | Ticket %d | %s",
-                                     ticket,PendingType()),clrLime);
-   PrintFormat("[BOLETA][OK] PENDING ticket=%d type=%s lot=%.2f",
-               ticket,PendingType(),g_lots);
+   ShowExecutionMessage(StringFormat("PENDENTE ENVIADA | Ticket %d | %s",ticket,typeName),clrLime);
+   PrintFormat("[BOLETA][OK] PENDING ticket=%d type=%s lot=%.2f",ticket,typeName,g_lots);
    return(true);
 }
 
 void CloseAll()
 {
+   int closed = 0;
+   double pl = 0.0;
+
    for(int i=OrdersTotal()-1;i>=0;i--)
    {
       if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES))
@@ -632,64 +786,96 @@ void CloseAll()
       RefreshRates();
 
       double price = (OrderType() == OP_BUY ? Bid : Ask);
+      double tradePL = OrderProfit() + OrderSwap() + OrderCommission();
 
       ResetLastError();
 
-      if(!OrderClose(OrderTicket(),OrderLots(),price,InpSlippage,clrWhite))
+      if(OrderClose(OrderTicket(),OrderLots(),price,InpSlippage,clrWhite))
+      {
+         closed++;
+         pl += tradePL;
+      }
+      else
          PrintFormat("[BOLETA][ERROR] Close ticket=%d error=%d",
                      OrderTicket(),GetLastError());
    }
+
+   ShowExecutionMessage(StringFormat("FECHADAS %d | %s  %s",closed,FmtMoney(pl),FmtPct(pl)),
+                        PnLColor(pl));
 }
 
 void BuildPanel()
 {
    CreateBackground();
 
-   CreateLabel(OBJ_TITLE,"BOLETA OPERACIONAL  v0.30",
-               PanelX+15,PanelY+12,12,clrWhite,true);
+   int x = PanelX + 10;     // margem esquerda
+   int w = PanelW - 20;     // largura util
+   int hw = (w - 6) / 2;    // metade (botoes lado a lado)
 
-   CreateLabel(OBJ_STATUS,"DIREÇÃO: BUY | PRONTO",
-               PanelX+15,PanelY+34,8,clrSilver,false);
+   CreateLabel(OBJ_TITLE,"BOLETA  v0.41",
+               x,PanelY+5,10,clrWhite,true);
 
-   CreateButton(OBJ_LOT_MINUS,"-",PanelX+70,PanelY+55,32,28,C'30,40,55',clrWhite);
+   CreateLabel(OBJ_STATUS,"",
+               x,PanelY+23,7,clrSilver,false);
+
+   // lote
+   CreateButton(OBJ_LOT_MINUS,"-",x,PanelY+38,24,20,C'30,40,55',clrWhite);
    CreateEdit(OBJ_LOT_EDIT,DoubleToString(g_lots,2),
-              PanelX+105,PanelY+55,90,28);
-   CreateButton(OBJ_LOT_PLUS,"+",PanelX+200,PanelY+55,32,28,C'30,40,55',clrWhite);
+              x+28,PanelY+38,w-56,20);
+   CreateButton(OBJ_LOT_PLUS,"+",x+w-24,PanelY+38,24,20,C'30,40,55',clrWhite);
 
-   CreateButton(OBJ_PRE_001,"0.01",PanelX+15,PanelY+92,60,22,C'20,28,40',clrSilver);
-   CreateButton(OBJ_PRE_002,"0.02",PanelX+80,PanelY+92,60,22,C'20,28,40',clrSilver);
-   CreateButton(OBJ_PRE_005,"0.05",PanelX+145,PanelY+92,60,22,C'20,28,40',clrSilver);
-   CreateButton(OBJ_PRE_010,"0.10",PanelX+210,PanelY+92,60,22,C'20,28,40',clrSilver);
+   // presets
+   int pw = (w - 12) / 4;
+   CreateButton(OBJ_PRE_001,"0.01",x,           PanelY+62,pw,17,C'20,28,40',clrSilver);
+   CreateButton(OBJ_PRE_002,"0.02",x+(pw+4),    PanelY+62,pw,17,C'20,28,40',clrSilver);
+   CreateButton(OBJ_PRE_005,"0.05",x+2*(pw+4),  PanelY+62,pw,17,C'20,28,40',clrSilver);
+   CreateButton(OBJ_PRE_010,"0.10",x+3*(pw+4),  PanelY+62,pw,17,C'20,28,40',clrSilver);
 
-   CreateButton(OBJ_BUY,"BUY\n@ MERCADO",
-                PanelX+15,PanelY+125,130,44,clrGreen,clrWhite);
-   CreateButton(OBJ_SELL,"SELL\n@ MERCADO",
-                PanelX+150,PanelY+125,130,44,clrFireBrick,clrWhite);
+   // mercado
+   CreateButton(OBJ_BUY,"BUY MERCADO",
+                x,PanelY+84,hw,26,clrGreen,clrWhite);
+   CreateButton(OBJ_SELL,"SELL MERCADO",
+                x+hw+6,PanelY+84,hw,26,clrFireBrick,clrWhite);
 
-   CreateButton(OBJ_DRAW,"DESENHAR ORDEM\nEntrada + Stop + Gain",
-                PanelX+15,PanelY+180,265,42,clrDodgerBlue,clrWhite);
+   // planejamento
+   CreateButton(OBJ_DRAW,"DESENHAR ORDEM",
+                x,PanelY+114,w,24,clrDodgerBlue,clrWhite);
 
    CreateButton(OBJ_CONFIRM,"CONFIRMAR",
-                PanelX+15,PanelY+230,130,30,C'25,90,45',clrWhite);
+                x,PanelY+142,hw,22,C'25,90,45',clrWhite);
    CreateButton(OBJ_CANCEL,"CANCELAR",
-                PanelX+150,PanelY+230,130,30,C'120,35,35',clrWhite);
+                x+hw+6,PanelY+142,hw,22,C'120,35,35',clrWhite);
 
+   // risco / ganho
    CreateLabel(OBJ_RISK,"Risco (SL):  $ 0.00   0.000%",
-               PanelX+20,PanelY+280,9,clrRed);
+               x+4,PanelY+172,8,CLR_ZERO);
    CreateLabel(OBJ_GAIN,"Ganho (TP):  $ 0.00   0.000%",
-               PanelX+20,PanelY+302,9,clrLime);
+               x+4,PanelY+187,8,CLR_ZERO);
    CreateLabel(OBJ_RR,"Relação R:R:  1 : 0.00",
-               PanelX+20,PanelY+324,9,clrWhite,true);
+               x+4,PanelY+202,8,clrWhite,true);
 
    CreateLabel(OBJ_ENTRY_INFO,"Entrada: —",
-               PanelX+20,PanelY+350,8,clrSilver);
+               x+4,PanelY+222,7,clrSilver);
    CreateLabel(OBJ_SL_INFO,"Stop:    —",
-               PanelX+20,PanelY+370,8,clrSilver);
+               x+4,PanelY+235,7,clrSilver);
    CreateLabel(OBJ_TP_INFO,"Gain:    —",
-               PanelX+20,PanelY+390,8,clrSilver);
+               x+4,PanelY+248,7,clrSilver);
+
+   // resultados
+   CreateLabel(OBJ_RES_TITLE,"RESULTADO",
+               x+4,PanelY+268,7,clrSilver,true);
+   CreateLabel(OBJ_RES_OPEN,"Abertas (0):   $ 0.00   0.000%",
+               x+4,PanelY+282,8,CLR_ZERO);
+   CreateLabel(OBJ_RES_CLOSED,"Fechadas hoje (0):   $ 0.00   0.000%",
+               x+4,PanelY+297,8,CLR_ZERO);
+   CreateLabel(OBJ_RES_TOTAL,"TOTAL DO DIA:   $ 0.00   0.000%",
+               x+4,PanelY+314,8,CLR_ZERO,true);
+
+   CreateLabel(OBJ_MSG,"Pronto.",
+               x+4,PanelY+332,7,clrSilver);
 
    CreateButton(OBJ_CLOSE_ALL,"X  FECHAR TUDO",
-                PanelX+15,PanelY+445,265,35,C'150,30,30',clrWhite);
+                x,PanelY+348,w,22,C'150,30,30',clrWhite);
 
    ChartRedraw();
 }
@@ -698,7 +884,7 @@ void UpdateStatus()
 {
    string mode = "LIVE";
 
-   string text = StringFormat("%s | %s | Magic %d | Spread %.1f",
+   string text = StringFormat("%s | %s | Magic %d | Spr %.0f",
                               Symbol(),mode,InpMagic,
                               (Ask-Bid)/Point);
 
@@ -712,12 +898,17 @@ int OnInit()
    BuildPanel();
    UpdateStatus();
    UpdatePlanner();
+   UpdateResults(true);
+
+   EventSetTimer(1);   // atualiza resultados mesmo sem ticks (fim de semana, mercado parado)
 
    return(INIT_SUCCEEDED);
 }
 
 void OnDeinit(const int reason)
 {
+   EventKillTimer();
+
    DeleteObject(LINE_ENTRY);
    DeleteObject(LINE_SL);
    DeleteObject(LINE_TP);
@@ -730,6 +921,7 @@ void OnDeinit(const int reason)
       OBJ_BUY,OBJ_SELL,OBJ_DRAW,OBJ_CONFIRM,OBJ_CANCEL,
       OBJ_RISK,OBJ_GAIN,OBJ_RR,
       OBJ_ENTRY_INFO,OBJ_SL_INFO,OBJ_TP_INFO,
+      OBJ_RES_TITLE,OBJ_RES_OPEN,OBJ_RES_CLOSED,OBJ_RES_TOTAL,OBJ_MSG,
       OBJ_CLOSE_ALL
    };
 
@@ -742,9 +934,16 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    UpdateStatus();
+   UpdateResults(false);
 
    if(g_plannerActive)
       UpdatePlanner();
+}
+
+void OnTimer()
+{
+   UpdateResults(false);
+   ChartRedraw();
 }
 
 void OnChartEvent(const int id,const long &lparam,
@@ -823,6 +1022,9 @@ void OnChartEvent(const int id,const long &lparam,
    else if(sparam == OBJ_CLOSE_ALL)
       CloseAll();
 
-   ObjectSetInteger(0,sparam,OBJPROP_STATE,false);
+   if(ObjectFind(0,sparam) >= 0)
+      ObjectSetInteger(0,sparam,OBJPROP_STATE,false);
+
+   UpdateResults(true);
    ChartRedraw();
 }
